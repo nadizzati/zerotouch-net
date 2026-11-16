@@ -10,7 +10,7 @@ This project was developed as part of an application to the Taiwan Experience Ed
 
 | Stage | Scope | Status |
 |-------|-------|--------|
-| 1 | DHCP (options 66/67), TFTP and HTTP servers, simulated devices | In progress |
+| 1 | DHCP (options 66/67), TFTP and HTTP servers, simulated devices | Implemented, verification in progress |
 | 2 | Inventory and role identification (MAC, option 60) | Planned |
 | 3 | Jinja2 templates per role, delivered with Ansible | Planned |
 | 4 | Git as source of truth (branching, last known good tag, secrets) | Planned |
@@ -26,19 +26,41 @@ Optional AI features (device role classification from DHCP fingerprints, drift a
 - A simulated device is a Linux container with a DHCP client, a TFTP client and a configuration file that stands in for a running configuration. It is not a network operating system.
 - TFTP is unauthenticated by design. The simulation is intended to run on an isolated bridge network only. Secrets will be handled with Ansible Vault in later stages.
 
+## Architecture (stage 1)
+
+```text
+                 zt-net  172.28.10.0/24
+  +--------------+  +--------------+  +------------------+
+  | dhcp-tftp    |  | http         |  | device-01/02     |
+  | dnsmasq      |  | nginx        |  | DHCP + TFTP      |
+  | 172.28.10.2  |  | 172.28.10.3  |  | client           |
+  +--------------+  +--------------+  +------------------+
+```
+
+Boot sequence of a simulated device:
+
+1. The device sends a DHCP discover with its vendor class (option 60) and requests options 66 and 67.
+2. dnsmasq replies with an address from the pool 172.28.10.100-200, the TFTP server (option 66) and the boot file name (option 67).
+3. The device downloads the boot file over TFTP and runs it.
+4. The boot file contacts the HTTP server to confirm that the provisioning service is reachable.
+
+A fuller architecture description will be added to `docs/architecture.md` in stage 7.
+
 ## Repository layout
 
 ```text
 docker/            Container images (DHCP/TFTP, HTTP, device simulator, controller)
+provisioning/      Files served to devices (tftp/ and http/)
 inventory/         Device inventory: MAC address or vendor class to role
 ansible/           Playbooks and roles
 templates/         Jinja2 configuration templates per role
 scripts/           Helper scripts (drift detection, rollback)
 tests/             Unit and integration tests
 docs/              Architecture notes, decision records, report notes
+.github/workflows/ Continuous integration
 ```
 
-Directories are added or filled as each stage is completed.
+Some directories are empty until the stage that fills them.
 
 ## Prerequisites
 
@@ -46,6 +68,39 @@ Directories are added or filled as each stage is completed.
 - Git
 
 Ansible is run from a container in later stages, so it does not need to be installed on the host.
+
+## Quick start (stage 1)
+
+Start the DHCP/TFTP and HTTP servers:
+
+```sh
+docker compose up -d --build
+```
+
+Start the simulated devices:
+
+```sh
+docker compose --profile devices up -d --build
+```
+
+Inspect the result:
+
+```sh
+docker compose logs dhcp-tftp
+docker compose logs device-01 device-02
+```
+
+Stop and remove everything:
+
+```sh
+docker compose --profile devices down
+```
+
+Detailed steps and verification notes are in [docs/report-notes/stage-1-simulation.md](docs/report-notes/stage-1-simulation.md).
+
+## Design decisions
+
+Decision records are kept in [docs/decisions/](docs/decisions/).
 
 ## License
 
