@@ -1,0 +1,93 @@
+# zerotouch-net simulation environment (stage 1: DHCP + TFTP + HTTP + simulated devices).
+#
+# Infrastructure services start with a plain "docker compose up -d".
+# Simulated devices sit behind the "devices" profile so that they can be
+# started on demand, which mimics a new device being plugged into the network.
+
+name: zerotouch-net
+
+services:
+  dhcp-tftp:
+    build: ./docker/dhcp-tftp
+    container_name: zt-dhcp-tftp
+    cap_add:
+      - NET_ADMIN
+    volumes:
+      - ./docker/dhcp-tftp/dnsmasq.conf:/etc/dnsmasq.conf:ro
+      - ./provisioning/tftp:/srv/tftp:ro
+    networks:
+      zt-net:
+        ipv4_address: 172.28.10.2
+    healthcheck:
+      test: ["CMD-SHELL", "pidof dnsmasq"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  http:
+    image: nginx:1.27-alpine
+    container_name: zt-http
+    volumes:
+      - ./provisioning/http:/usr/share/nginx/html:ro
+    networks:
+      zt-net:
+        ipv4_address: 172.28.10.3
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/ztp-ready.txt"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  device-01:
+    build: ./docker/device-sim
+    container_name: zt-device-01
+    profiles: ["devices"]
+    hostname: new-device-01
+    mac_address: "02:00:00:00:00:01"
+    environment:
+      DEVICE_HOSTNAME: new-device-01
+      VENDOR_CLASS: zt-sim-switch
+    cap_add:
+      - NET_ADMIN
+    init: true
+    depends_on:
+      dhcp-tftp:
+        condition: service_healthy
+      http:
+        condition: service_healthy
+    networks:
+      - zt-net
+
+  device-02:
+    build: ./docker/device-sim
+    container_name: zt-device-02
+    profiles: ["devices"]
+    hostname: new-device-02
+    mac_address: "02:00:00:00:00:02"
+    environment:
+      DEVICE_HOSTNAME: new-device-02
+      VENDOR_CLASS: zt-sim-ap
+    cap_add:
+      - NET_ADMIN
+    init: true
+    depends_on:
+      dhcp-tftp:
+        condition: service_healthy
+      http:
+        condition: service_healthy
+    networks:
+      - zt-net
+
+networks:
+  zt-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.10.0/24
+          gateway: 172.28.10.1
+          # Docker hands out addresses from this small range only. The DHCP
+          # pool (172.28.10.100-200) is kept apart so that a device address
+          # really comes from dnsmasq and not from Docker's own IPAM.
+          ip_range: 172.28.10.16/28
